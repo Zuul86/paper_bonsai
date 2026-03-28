@@ -5,7 +5,7 @@
 
 // Terminal grid dimensions for the right-hand panel
 #define BONSAI_WIDTH 40
-#define BONSAI_HEIGHT 19
+#define BONSAI_HEIGHT 25
 
 // ASCII characters representation
 #define CHAR_TRUNK '|'

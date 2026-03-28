@@ -14,11 +14,11 @@ static void sendCmdData(int8_t cs_pin, int8_t dc_pin, uint8_t cmd, const uint8_t
     digitalWrite(cs_pin, HIGH); // CS HIGH
 }
 
-// Helper to wait for the BUSY pin to go HIGH (idle)
+// Helper to wait for the BUSY pin to go LOW (idle)
 static void waitUntilIdleRaw(int8_t busy_pin) {
-    Serial.print("Waiting for BUSY pin to go HIGH (idle)...");
+    Serial.print("Waiting for BUSY pin to go LOW (idle)...");
     unsigned long start = millis();
-    while (digitalRead(busy_pin) == LOW) { // From Waveshare example, BUSY is LOW when busy
+    while (digitalRead(busy_pin) == HIGH) { // For V2 panels, BUSY is HIGH when busy
         if (millis() - start > 30000) { // 30s timeout
             Serial.println(" Timeout!");
             return;

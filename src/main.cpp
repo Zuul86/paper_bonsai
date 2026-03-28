@@ -6,6 +6,7 @@
 #include "weather.h"
 #include "bonsai.h"
 #include "time_sync.h"
+#include "waveshare_utils.h"
 
 // Define display class for 7.5" V2 3-Color GxEPD2_750c_Z08
 // The Waveshare example code matches the init sequence for the GDEY075Z08 (UC8179 controller).
@@ -74,51 +75,9 @@ void drawBonsaiPanel() {
     }
 }
 
-
-// Helper to send a command and optional data via raw SPI
-void sendCmdData(uint8_t cmd, const uint8_t* data, size_t len) {
-    digitalWrite(15, LOW);  // CS LOW
-    digitalWrite(27, LOW);  // DC LOW (Command mode)
-    SPI.transfer(cmd);
-    if (len > 0) {
-        digitalWrite(27, HIGH); // DC HIGH (Data mode)
-        for (size_t i = 0; i < len; i++) {
-            SPI.transfer(data[i]);
-        }
-    }
-    digitalWrite(15, HIGH); // CS HIGH
-}
-
-// Helper to wait for the BUSY pin to go LOW (idle)
-void waitUntilIdleRaw() {
-    Serial.print("Waiting for BUSY pin to go LOW (idle)...");
-    unsigned long start = millis();
-    while (digitalRead(25) == HIGH) { // For V2 panels, BUSY is HIGH when busy
-        if (millis() - start > 30000) { // 30s timeout
-            Serial.println(" Timeout!");
-            return;
-        }
-        delay(5);
-    }
-    Serial.println(" OK.");
-    delay(5); // Small delay after busy goes low
-}
-
-// Sends the full init sequence from the Waveshare example code to fix washed-out display issues.
-void waveshare_init_override() {
-    sendCmdData(0x01, (const uint8_t[]){0x07, 0x07, 0x3f, 0x3f}, 4); // POWER SETTING
-    sendCmdData(0x06, (const uint8_t[]){0x17, 0x17, 0x28, 0x17}, 4); // Booster Soft Start
-    sendCmdData(0x04, NULL, 0);                                      // POWER ON
-    waitUntilIdleRaw();
-    sendCmdData(0x00, (const uint8_t[]){0x1F}, 1);                    // PANNEL SETTING
-    sendCmdData(0x61, (const uint8_t[]){0x03, 0x20, 0x01, 0xE0}, 4); // TRES
-    sendCmdData(0x15, (const uint8_t[]){0x00}, 1);                    // Dual SPI
-    sendCmdData(0x50, (const uint8_t[]){0x10, 0x07}, 2);              // VCOM AND DATA INTERVAL SETTING (The "gray screen" fix)
-    sendCmdData(0x60, (const uint8_t[]){0x22}, 1);                    // TCON SETTING
-}
-
 void updateDisplay() {
     Serial.println("Refreshing E-Ink Display...");
+    unsigned long start_time = millis();
     
     // Generate bonsai once per draw cycle, BEFORE the paging loop
     generateBonsai();
@@ -146,22 +105,30 @@ void updateDisplay() {
         
     } while (display.nextPage());
     
-    Serial.println("Refresh complete.");
+    unsigned long end_time = millis();
+    Serial.printf("Refresh complete. Took %lu ms.\n", end_time - start_time);
+}
+
+void logWakeupReason() {
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    switch(wakeup_reason) {
+        case ESP_SLEEP_WAKEUP_TIMER: Serial.println("Wakeup Reason: Timer (Normal Interval)"); break;
+        case ESP_SLEEP_WAKEUP_EXT0:  Serial.println("Wakeup Reason: External Signal (RTC_IO)"); break;
+        case ESP_SLEEP_WAKEUP_EXT1:  Serial.println("Wakeup Reason: External Signal (RTC_CNTL)"); break;
+        default:                     Serial.printf("Wakeup Reason: Hard Boot / Reset (Code: %d)\n", wakeup_reason); break;
+    }
 }
 
 void setup() {
     // Release the RTC hold on pins that were isolated during deep sleep.
     // Without this, the ESP32 cannot communicate with the display upon waking up!
-    rtc_gpio_hold_dis(GPIO_NUM_12);
-    rtc_gpio_hold_dis(GPIO_NUM_13);
-    rtc_gpio_hold_dis(GPIO_NUM_14);
-    rtc_gpio_hold_dis(GPIO_NUM_15);
-    rtc_gpio_hold_dis(GPIO_NUM_25);
-    rtc_gpio_hold_dis(GPIO_NUM_26);
-    rtc_gpio_hold_dis(GPIO_NUM_27);
+    waveshare_board_wakeup_pins();
 
     Serial.begin(115200);
     delay(100);
+    
+    Serial.println("\n--- Paper Bonsai Booting ---");
+    logWakeupReason();
 
     setupWeather();
     setupTime();
@@ -193,13 +160,7 @@ void setup() {
     // voltage into the display board, stopping it from properly discharging and resulting 
     // in dim, washed-out colors on subsequent wakeups.
     SPI.end();
-    rtc_gpio_isolate(GPIO_NUM_12); // MISO
-    rtc_gpio_isolate(GPIO_NUM_13); // SCK
-    rtc_gpio_isolate(GPIO_NUM_14); // MOSI
-    rtc_gpio_isolate(GPIO_NUM_15); // CS
-    rtc_gpio_isolate(GPIO_NUM_25); // BUSY
-    rtc_gpio_isolate(GPIO_NUM_26); // RST
-    rtc_gpio_isolate(GPIO_NUM_27); // DC
+    waveshare_board_sleep_pins();
 
     // Configure deep sleep for 5 minutes (time in microseconds)
     Serial.println("Going to deep sleep for 5 minutes...");
