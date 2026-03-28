@@ -4,6 +4,7 @@
 
 #include "weather.h"
 #include "bonsai.h"
+#include "time.h"
 
 // Define display class for 7.5" V2 3-Color GxEPD2_750c_Z08
 // Waveshare ESP32 Driver Board pins: CS=15, DC=27, RST=26, BUSY=25
@@ -16,26 +17,33 @@ int FONT_HEIGHT = 24;
 int BONSAI_START_X;
 int BONSAI_START_Y;
 
-void drawWeatherPanel() {
-    WeatherData data = getWeatherData();
-
+void drawWeatherPanel(WeatherData data, const String& dateTime) {
     display.setTextColor(GxEPD_BLACK);
-    display.setCursor(20, 60);
-    display.print("STATION STATUS");
-
-    display.setCursor(20, 100);
-    display.print("Temp: ");
+    
+    // Temperature in upper left
+    display.setFont(&FreeMonoBold12pt7b);
+    display.setCursor(20, 30);
     display.print(data.temperature, 1);
     display.print(" C");
 
-    display.setCursor(20, 140);
-    display.print("Hum : ");
+    // Date and Time in center with smaller font
+    display.setFont(NULL); // Use default 6x8 font
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(dateTime, 0, 0, &x1, &y1, &w, &h);
+    int dateTimeX = (display.width() - w) / 2;
+    // The 12pt font's baseline is at y=30. The default font's top is at cursor_y.
+    // The default font is 8px high. To align its bottom with the 12pt baseline:
+    int dateTimeY = 30 - 8;
+    display.setCursor(dateTimeX, dateTimeY);
+    display.print(dateTime);
+
+    // Humidity in upper right (7 chars max "100.0 %")
+    display.setFont(&FreeMonoBold12pt7b); // Restore font
+    int humX = display.width() - (7 * FONT_WIDTH) - 20;
+    display.setCursor(humX, 30);
     display.print(data.humidity, 1);
     display.print(" %");
-
-    display.setTextColor(GxEPD_RED);
-    display.setCursor(20, 180);
-    display.print(data.statusMessage);
 }
 
 void drawBonsaiPanel() {
@@ -70,12 +78,16 @@ void updateDisplay() {
     // Generate bonsai once per draw cycle, BEFORE the paging loop
     generateBonsai();
     
+    // Fetch weather data once BEFORE the paging loop
+    WeatherData weather = getWeatherData();
+    String dateTime = getDateTimeString();
+    
     display.setFullWindow();
     display.firstPage();
     do {
         display.fillScreen(GxEPD_WHITE);
         
-        //drawWeatherPanel();
+        drawWeatherPanel(weather, dateTime);
         drawBonsaiPanel();
         
     } while (display.nextPage());
@@ -89,6 +101,7 @@ void setup() {
     delay(100);
 
     setupWeather();
+    setupTime();
 
     // The Waveshare ESP32 Driver board uses alternate SPI pins.
     // We must remap them before initializing the display.
@@ -102,8 +115,8 @@ void setup() {
 
     // Initialize UI alignment variables now that the display is set up.
     // This ensures the panel is correctly placed regardless of screen rotation.
-    BONSAI_START_X = display.width() - (BONSAI_WIDTH * FONT_WIDTH) - 20; // 20px padding
-    BONSAI_START_Y = (display.height() - (BONSAI_HEIGHT * FONT_HEIGHT)) / 2 + FONT_HEIGHT;
+    BONSAI_START_X = (display.width() - (BONSAI_WIDTH * FONT_WIDTH)) / 2; // Center horizontally
+    BONSAI_START_Y = display.height() - (BONSAI_HEIGHT * FONT_HEIGHT) - 100 + FONT_HEIGHT; // 100px padding from bottom
 
     // Initial draw
     updateDisplay();
