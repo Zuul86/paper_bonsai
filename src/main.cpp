@@ -5,7 +5,7 @@
 
 #include "weather.h"
 #include "bonsai.h"
-#include "time.h"
+#include "time_sync.h"
 
 // Define display class for 7.5" V2 3-Color GxEPD2_750c_Z08
 // The Waveshare example code matches the init sequence for the GDEY075Z08 (UC8179 controller).
@@ -89,11 +89,11 @@ void sendCmdData(uint8_t cmd, const uint8_t* data, size_t len) {
     digitalWrite(15, HIGH); // CS HIGH
 }
 
-// Helper to wait for the BUSY pin to go HIGH (idle)
+// Helper to wait for the BUSY pin to go LOW (idle)
 void waitUntilIdleRaw() {
-    Serial.print("Waiting for BUSY pin to go HIGH (idle)...");
+    Serial.print("Waiting for BUSY pin to go LOW (idle)...");
     unsigned long start = millis();
-    while (digitalRead(25) == LOW) { // From Waveshare example, BUSY is LOW when busy
+    while (digitalRead(25) == HIGH) { // For V2 panels, BUSY is HIGH when busy
         if (millis() - start > 30000) { // 30s timeout
             Serial.println(" Timeout!");
             return;
@@ -101,7 +101,7 @@ void waitUntilIdleRaw() {
         delay(5);
     }
     Serial.println(" OK.");
-    delay(5); // Small delay after busy goes high
+    delay(5); // Small delay after busy goes low
 }
 
 // Sends the full init sequence from the Waveshare example code to fix washed-out display issues.

@@ -1,9 +1,9 @@
-#ifndef TIME_H
-#define TIME_H
+#ifndef TIME_SYNC_H
+#define TIME_SYNC_H
 
 #include <Arduino.h>
 
 void setupTime();
 String getDateTimeString();
 
-#endif // TIME_H
+#endif // TIME_SYNC_H
