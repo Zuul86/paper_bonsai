@@ -29,15 +29,13 @@ void drawWeatherPanel(WeatherData data, const String& dateTime) {
     display.print(data.temperature, 1);
     display.print(" C");
 
-    // Date and Time in center with smaller font
+    // Date and Time in bottom right corner (5px padding)
     display.setFont(NULL); // Use default 6x8 font
     int16_t x1, y1;
     uint16_t w, h;
     display.getTextBounds(dateTime, 0, 0, &x1, &y1, &w, &h);
-    int dateTimeX = (display.width() - w) / 2;
-    // The 12pt font's baseline is at y=30. The default font's top is at cursor_y.
-    // The default font is 8px high. To align its bottom with the 12pt baseline:
-    int dateTimeY = 30 - 8;
+    int dateTimeX = display.width() - w - 5;
+    int dateTimeY = display.height() - h - 5;
     display.setCursor(dateTimeX, dateTimeY);
     display.print(dateTime);
 
