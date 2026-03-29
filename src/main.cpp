@@ -160,10 +160,10 @@ void setup() {
     SPI.end();
     waveshare_board_sleep_pins();
 
-    // Configure deep sleep for 5 minutes (time in microseconds)
-    Serial.println("Going to deep sleep for 5 minutes...");
+    // Configure deep sleep for 30 minutes (time in microseconds)
+    Serial.println("Going to deep sleep for 30 minutes...");
     Serial.flush(); // Ensure serial messages finish transmitting before CPU stops
-    esp_sleep_enable_timer_wakeup(5ULL * 60ULL * 1000000ULL);
+    esp_sleep_enable_timer_wakeup(30ULL * 60ULL * 1000000ULL);
     esp_deep_sleep_start();
 }
 
