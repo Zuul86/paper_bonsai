@@ -7,12 +7,15 @@
 // Store initialization state in RTC memory so it survives deep sleep
 RTC_DATA_ATTR bool timeInitialized = false;
 
-// Timezone configuration (Configure these to match your location)
-const long  gmtOffset_sec = -18000;      // Example: -18000 for EST (UTC-5)
-const int   daylightOffset_sec = 3600;   // 3600 for 1 hour DST offset (0 if no DST)
+// Timezone configuration using POSIX TZ string for Central Time (CST/CDT)
+const char* time_zone = "CST6CDT,M3.2.0,M11.1.0";
 const char* ntpServer = "pool.ntp.org";
 
 void setupTime() {
+    // Always set the timezone, as environment variables are lost during deep sleep
+    setenv("TZ", time_zone, 1);
+    tzset();
+
     if (!timeInitialized) {
         Serial.print("Connecting to WiFi to sync time...");
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -26,7 +29,7 @@ void setupTime() {
         Serial.println();
 
         if (WiFi.status() == WL_CONNECTED) {
-            configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+            configTzTime(time_zone, ntpServer);
             struct tm timeinfo;
             if (getLocalTime(&timeinfo)) {
                 timeInitialized = true;
@@ -49,6 +52,6 @@ String getDateTimeString() {
     localtime_r(&now, &timeinfo);
     
     char buffer[32];
-    strftime(buffer, sizeof(buffer), "%m/%d/%y %H:%M", &timeinfo);
+    strftime(buffer, sizeof(buffer), "%m/%d/%y %I:%M %p", &timeinfo);
     return String(buffer);
 }
