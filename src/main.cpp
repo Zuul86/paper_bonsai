@@ -20,14 +20,20 @@ int FONT_HEIGHT = 24;
 int BONSAI_START_X;
 int BONSAI_START_Y;
 
-void drawWeatherPanel(WeatherData data, const String& dateTime) {
+#define BATTERY_PIN 34 // Change to the actual ADC pin connected to your voltage divider
+
+void drawWeatherPanel(WeatherData data, const String& dateTime, float voltage) {
     display.setTextColor(GxEPD_BLACK);
     
     // Temperature in upper left
     display.setFont(&FreeMonoBold12pt7b);
     display.setCursor(20, 30);
     display.print(data.temperature, 1);
-    display.print(" C");
+    display.print(" F");
+
+    Serial.println(data.statusMessage + " F");
+    // Log the actual weather data
+    Serial.printf("Weather Panel Data - Temp: %.1f F, Humidity: %.1f %%, Status: %s\n", data.temperature, data.humidity, data.statusMessage.c_str());
 
     // Date and Time in bottom right corner (5px padding)
     display.setFont(NULL); // Use default 6x8 font
@@ -38,6 +44,14 @@ void drawWeatherPanel(WeatherData data, const String& dateTime) {
     int dateTimeY = display.height() - h - 5;
     display.setCursor(dateTimeX, dateTimeY);
     display.print(dateTime);
+
+    // Voltage in bottom left corner (5px padding)
+    String volStr = String(voltage, 2) + " V";
+    display.getTextBounds(volStr, 0, 0, &x1, &y1, &w, &h);
+    int volX = 5;
+    int volY = display.height() - h - 5;
+    display.setCursor(volX, volY);
+    display.print(volStr);
 
     // Humidity in upper right (7 chars max "100.0 %")
     display.setFont(&FreeMonoBold12pt7b); // Restore font
@@ -84,27 +98,28 @@ void updateDisplay() {
     WeatherData weather = getWeatherData();
     String dateTime = getDateTimeString();
     
+    // Read battery voltage (Assumes a 1/2 voltage divider, adjust multiplier as needed)
+    // ESP32 ADC is 12-bit (0-4095) and reference is ~3.3V
+    float voltage = analogRead(BATTERY_PIN) * (3.3 / 4095.0) * 2.0;
+
+    Serial.printf("Data fetched. Temp: %.1f, Time: %s, Voltage: %.2f\n", weather.temperature, dateTime.c_str(), voltage);
+
     display.setFullWindow();
     display.firstPage();
 
-    // The GxEPD2 init sequence doesn't work perfectly for all Waveshare panel revisions,
-    // resulting in a washed-out display. We override it here by sending the known-good
-    // init sequence from Waveshare's own example code via raw SPI. This is done
-    // *after* firstPage() because firstPage() performs its own hardware reset and init.
-    SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-    waveshare_init_override();
-    SPI.endTransaction();
-
+    int pageCount = 0;
     do {
+        pageCount++;
+        Serial.printf("Rendering page %d...\n", pageCount);
         display.fillScreen(GxEPD_WHITE);
         
-        drawWeatherPanel(weather, dateTime);
+        drawWeatherPanel(weather, dateTime, voltage);
         drawBonsaiPanel();
         
     } while (display.nextPage());
     
     unsigned long end_time = millis();
-    Serial.printf("Refresh complete. Took %lu ms.\n", end_time - start_time);
+    Serial.printf("Refresh complete. Rendered %d pages. Took %lu ms.\n", pageCount, end_time - start_time);
 }
 
 void logWakeupReason() {
@@ -128,16 +143,34 @@ void setup() {
     Serial.println("\n--- Paper Bonsai Booting ---");
     logWakeupReason();
 
+    Serial.println("Setting up sensors and time...");
     setupWeather();
     setupTime();
 
     // The Waveshare ESP32 Driver board uses alternate SPI pins.
     // We must remap them before initializing the display.
     // SCK=13, MISO=12, MOSI=14, CS=15
+    Serial.println("Initializing SPI and Display...");
     SPI.end(); 
-    SPI.begin(13, 12, 14, 15);
+    // Pass -1 for the CS pin so the ESP32 hardware SPI doesn't fight GxEPD2 for control of GPIO 15
+    SPI.begin(13, 12, 14, -1);
 
-    display.init(115200, true, 2, false); // The "true, 2, false" fixes known Waveshare reset issues
+    // Since we now actively cut power to the display during deep sleep (RST LOW), 
+    // we must bring the power back online and let it stabilize before initializing.
+    pinMode(26, OUTPUT);
+    digitalWrite(26, HIGH);
+    delay(200); // Give the Waveshare MOSFET and panel capacitors time to stabilize VCC
+
+    // If the device was abruptly powered down during a previous refresh, the e-ink capsules
+    // retain a residual DC bias, causing ghosted and washed out images. 
+    // We can detect a cold power-on and force a screen wipe to clear it.
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
+        Serial.println("Cold boot detected. Wiping screen to reset microcapsules...");
+        display.init(115200, true, 2, false);
+        display.clearScreen(); // Forces a full cycle to pristine white, equalizing charge
+    } else {
+        display.init(115200, true, 2, false); // Normal init ("true, 2, false" avoids power cut)
+    }
 
     display.setRotation(1); // Landscape
     display.setFont(&FreeMonoBold12pt7b);
@@ -147,10 +180,14 @@ void setup() {
     BONSAI_START_X = (display.width() - (BONSAI_WIDTH * FONT_WIDTH)) / 2; // Center horizontally
     BONSAI_START_Y = display.height() - (BONSAI_HEIGHT * FONT_HEIGHT) - 100 + FONT_HEIGHT; // 100px padding from bottom
 
+    Serial.printf("Display initialized. Resolution: %dx%d\n", display.width(), display.height());
+
     // Initial draw
+    Serial.println("Starting initial display update...");
     updateDisplay();
 
     // Hibernate display to completely power off the panel controller
+    Serial.println("Hibernating display...");
     display.hibernate();
 
     // Isolate E-Ink pins during deep sleep to prevent voltage leakage.
@@ -160,10 +197,10 @@ void setup() {
     SPI.end();
     waveshare_board_sleep_pins();
 
-    // Configure deep sleep for 30 minutes (time in microseconds)
-    Serial.println("Going to deep sleep for 30 minutes...");
+    // Configure deep sleep for 2 minutes (time in microseconds)
+    Serial.println("Going to deep sleep for 2 minutes...");
     Serial.flush(); // Ensure serial messages finish transmitting before CPU stops
-    esp_sleep_enable_timer_wakeup(30ULL * 60ULL * 1000000ULL);
+    esp_sleep_enable_timer_wakeup(2ULL * 60ULL * 1000000ULL);
     esp_deep_sleep_start();
 }
 

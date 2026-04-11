@@ -68,12 +68,14 @@ void waveshare_board_wakeup_pins() {
 }
 
 void waveshare_board_sleep_pins() {
-    // Instead of isolating the pins (which leaves them floating and causes the 
-    // Waveshare level-shifter IC to oscillate and glitch the display controller),
-    // we drive them to safe resting states and actively hold them there during sleep.
-    pinMode(15, OUTPUT); digitalWrite(15, HIGH); // CS HIGH (Deselected)
+    // We want to physically cut VCC to the E-Ink panel while sleeping.
+    // Holding RST LOW for >10ms triggers the Waveshare board's MOSFET to cut power.
+    // All other logic pins MUST be pulled LOW to prevent backfeeding voltage into 
+    // the display controller. This guarantees zero power draw and lets trapped 
+    // DC bias bleed off natively.
+    pinMode(15, OUTPUT); digitalWrite(15, LOW);  // CS LOW
     pinMode(27, OUTPUT); digitalWrite(27, LOW);  // DC LOW
-    pinMode(26, OUTPUT); digitalWrite(26, HIGH); // RST HIGH (Not in reset)
+    pinMode(26, OUTPUT); digitalWrite(26, LOW);  // RST LOW (CUTS VCC POWER)
     pinMode(13, OUTPUT); digitalWrite(13, LOW);  // SCK LOW
     pinMode(14, OUTPUT); digitalWrite(14, LOW);  // MOSI LOW
     pinMode(12, INPUT);  // MISO
