@@ -7,11 +7,12 @@
 #include "bonsai.h"
 #include "time_sync.h"
 #include "waveshare_utils.h"
+#include "GxEPD2_750c_Z08_Custom.h"
+#include <SPI.h>
 
-// Define display class for 7.5" V2 3-Color GxEPD2_750c_Z08
-// The Waveshare example code matches the init sequence for the GDEY075Z08 (UC8179 controller).
+// Define standard full 3-color display class for 7.5" V2 (075RW-Z08 / 800x480)
 // Waveshare ESP32 Driver Board pins: CS=15, DC=27, RST=26, BUSY=25
-GxEPD2_3C<GxEPD2_750c_GDEY075Z08, GxEPD2_750c_GDEY075Z08::HEIGHT / 2> display(GxEPD2_750c_GDEY075Z08(/*CS=*/ 15, /*DC=*/ 27, /*RST=*/ 26, /*BUSY=*/ 25));
+GxEPD2_3C<GxEPD2_750c_Z08_Custom, GxEPD2_750c_Z08_Custom::HEIGHT / 2> display(GxEPD2_750c_Z08_Custom(/*CS=*/ 15, /*DC=*/ 27, /*RST=*/ 26, /*BUSY=*/ 25));
 
 // UI alignment variables. These are initialized in setup() after the display
 // is rotated, so we can use the correct width and height.
@@ -21,6 +22,8 @@ int BONSAI_START_X;
 int BONSAI_START_Y;
 
 #define BATTERY_PIN 34 // Change to the actual ADC pin connected to your voltage divider
+
+// --- END OF FIX ---
 
 void drawWeatherPanel(WeatherData data, const String& dateTime, float voltage) {
     display.setTextColor(GxEPD_BLACK);
@@ -107,10 +110,7 @@ void updateDisplay() {
     display.setFullWindow();
     display.firstPage();
 
-    int pageCount = 0;
     do {
-        pageCount++;
-        Serial.printf("Rendering page %d...\n", pageCount);
         display.fillScreen(GxEPD_WHITE);
         
         drawWeatherPanel(weather, dateTime, voltage);
@@ -119,7 +119,7 @@ void updateDisplay() {
     } while (display.nextPage());
     
     unsigned long end_time = millis();
-    Serial.printf("Refresh complete. Rendered %d pages. Took %lu ms.\n", pageCount, end_time - start_time);
+    Serial.printf("Refresh complete. Took %lu ms.\n", end_time - start_time);
 }
 
 void logWakeupReason() {
@@ -133,9 +133,23 @@ void logWakeupReason() {
 }
 
 void setup() {
+    // Initialize safe logic states BEFORE releasing the RTC holds.
+    // This prevents floating pins from injecting phantom power into the 
+    // display controller via ESD diodes, which causes brownout latch-up,
+    // inverted colors (white text), and washed-out dim grey backgrounds.
+    pinMode(15, OUTPUT); digitalWrite(15, HIGH); // CS HIGH (Deselected)
+    pinMode(27, OUTPUT); digitalWrite(27, HIGH); // DC HIGH (Data mode)
+    pinMode(13, OUTPUT); digitalWrite(13, LOW);  // SCK LOW (Idle)
+    pinMode(14, OUTPUT); digitalWrite(14, LOW);  // MOSI LOW (Idle)
+    pinMode(26, OUTPUT); digitalWrite(26, HIGH); // RST HIGH (Turn on VCC MOSFET)
+
     // Release the RTC hold on pins that were isolated during deep sleep.
     // Without this, the ESP32 cannot communicate with the display upon waking up!
     waveshare_board_wakeup_pins();
+
+    // Give the Waveshare MOSFET and panel capacitors time to stabilize clean VCC
+    // BEFORE we spend seconds connecting to WiFi or initializing SPI
+    delay(200); 
 
     Serial.begin(115200);
     delay(100);
@@ -155,19 +169,13 @@ void setup() {
     // Pass -1 for the CS pin so the ESP32 hardware SPI doesn't fight GxEPD2 for control of GPIO 15
     SPI.begin(13, 12, 14, -1);
 
-    // Since we now actively cut power to the display during deep sleep (RST LOW), 
-    // we must bring the power back online and let it stabilize before initializing.
-    pinMode(26, OUTPUT);
-    digitalWrite(26, HIGH);
-    delay(200); // Give the Waveshare MOSFET and panel capacitors time to stabilize VCC
-
     // If the device was abruptly powered down during a previous refresh, the e-ink capsules
     // retain a residual DC bias, causing ghosted and washed out images. 
     // We can detect a cold power-on and force a screen wipe to clear it.
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
         Serial.println("Cold boot detected. Wiping screen to reset microcapsules...");
         display.init(115200, true, 2, false);
-        display.clearScreen(); // Forces a full cycle to pristine white, equalizing charge
+        display.clearScreen();     // Forces a full cycle to pristine white, equalizing charge
     } else {
         display.init(115200, true, 2, false); // Normal init ("true, 2, false" avoids power cut)
     }
@@ -189,6 +197,9 @@ void setup() {
     // Hibernate display to completely power off the panel controller
     Serial.println("Hibernating display...");
     display.hibernate();
+    // Give the panel's internal charge pumps a moment to completely bleed off
+    // before we violently cut VCC with the MOSFET. This prevents DC bias build-up.
+    delay(250); 
 
     // Isolate E-Ink pins during deep sleep to prevent voltage leakage.
     // ESP32 JTAG pins (13, 14, 15) have default pull-ups during deep sleep. This leaks 
